@@ -6,7 +6,7 @@ plugins {
 
 group = 'org.example'
 version = '0.0.1-SNAPSHOT'
-description = 'demo'
+description = 'ISE-LM1 Backend - Docker 기반 보안 실습 터미널 및 eBPF 로그 스트리밍 서버'
 
 java {
     toolchain {
