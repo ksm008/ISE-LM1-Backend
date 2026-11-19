@@ -24,6 +24,9 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 import org.springframework.web.util.UriComponentsBuilder;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.PipedInputStream;
@@ -33,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
@@ -46,16 +50,20 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
     private static final int SEND_BUFFER_LIMIT_BYTES = 512 * 1024;
     /** 터미널 입력 한 번(붙여넣기 포함)의 최대 크기 */
     private static final int MAX_TEXT_MESSAGE_BYTES = 64 * 1024;
+    private static final int MAX_TERMINAL_SIZE = 500;
+    private static final long EXEC_START_TIMEOUT_SECONDS = 30;
 
     private final DockerClient dockerClient;
     private final EbpfLogService ebpfLogService;
     private final LabProperties labProperties;
+    private final JsonMapper jsonMapper;
 
     private final AtomicInteger activeSessions = new AtomicInteger();
     private final Set<String> admittedSessions = ConcurrentHashMap.newKeySet();
     private final Set<String> activeLabIds = ConcurrentHashMap.newKeySet();
     private final Map<String, String> sessionContainers = new ConcurrentHashMap<>();
     private final Map<String, String> sessionLabIds = new ConcurrentHashMap<>();
+    private final Map<String, String> sessionExecIds = new ConcurrentHashMap<>();
     private final Map<String, PipedOutputStream> inputStreams = new ConcurrentHashMap<>();
     private final Map<String, ResultCallback.Adapter<Frame>> callbacks = new ConcurrentHashMap<>();
 
@@ -148,11 +156,18 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
             };
             callbacks.put(sessionId, callback);
 
-            dockerClient.execStartCmd(execCreateCmdResponse.getId())
+            String execId = execCreateCmdResponse.getId();
+            dockerClient.execStartCmd(execId)
                     .withDetach(false)
                     .withTty(true)
                     .withStdIn(pipedInputStream)
                     .exec(callback);
+
+            // 셸이 실제로 붙은 뒤에 입력·크기 조절 메시지를 처리하도록 기다린다.
+            if (!callback.awaitStarted(EXEC_START_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("셸 연결 시간 초과");
+            }
+            sessionExecIds.put(sessionId, execId);
 
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
@@ -178,12 +193,49 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
                 .withPidsLimit(limits.pidsLimit()); // 포크 폭탄 방지
     }
 
+    /**
+     * 클라이언트 메시지는 JSON 이다.
+     * <ul>
+     *   <li>{@code {"type":"input","data":"ls\r"}} : 셸 입력</li>
+     *   <li>{@code {"type":"resize","cols":120,"rows":30}} : 터미널 크기 변경</li>
+     * </ul>
+     * 형식이 맞지 않는 메시지는 무시한다.
+     */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
-        PipedOutputStream out = inputStreams.get(session.getId());
-        if (out != null) {
-            out.write(message.getPayload().getBytes(StandardCharsets.UTF_8));
-            out.flush();
+        JsonNode node;
+        try {
+            node = jsonMapper.readTree(message.getPayload());
+        } catch (JacksonException e) {
+            return;
+        }
+        if (node == null || !node.isObject()) {
+            return;
+        }
+
+        switch (node.path("type").asString("")) {
+            case "input" -> {
+                JsonNode data = node.get("data");
+                PipedOutputStream out = inputStreams.get(session.getId());
+                if (out != null && data != null && data.isString()) {
+                    out.write(data.asString().getBytes(StandardCharsets.UTF_8));
+                    out.flush();
+                }
+            }
+            case "resize" -> resizeTerminal(session.getId(), node.path("cols").asInt(0), node.path("rows").asInt(0));
+            default -> { /* 알 수 없는 type 은 무시 */ }
+        }
+    }
+
+    private void resizeTerminal(String sessionId, int cols, int rows) {
+        String execId = sessionExecIds.get(sessionId);
+        if (execId == null || cols < 1 || rows < 1 || cols > MAX_TERMINAL_SIZE || rows > MAX_TERMINAL_SIZE) {
+            return;
+        }
+        try {
+            dockerClient.resizeExecCmd(execId).withSize(rows, cols).exec();
+        } catch (Exception e) {
+            log.debug("터미널 크기 변경 실패 (session={})", sessionId, e);
         }
     }
 
@@ -193,6 +245,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
     }
 
     private void cleanupSession(String sessionId) {
+        sessionExecIds.remove(sessionId);
         PipedOutputStream out = inputStreams.remove(sessionId);
         if (out != null) {
             try {

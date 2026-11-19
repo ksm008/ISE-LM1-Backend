@@ -95,12 +95,21 @@ lab.cors.allowed-origins=http://localhost:5173
 - 이미 실습 중인 `labId` 로 다시 WebSocket을 연결하면 거부합니다.
 - 동시 실습 수를 넘으면 SSE는 503, WebSocket은 1013(`동시 실습 수 초과`)으로 종료합니다.
 - 오류가 나면 내부 오류 내용은 클라이언트에 보내지 않고 서버 로그에만 남깁니다.
-- WebSocket 메시지로 보낸 문자열은 그대로 쉘 입력으로 전달되고, 쉘 출력은 WebSocket 메시지로 돌아옵니다.
+- SSE는 구독 직후 `:connected` comment를 보내 연결을 바로 엽니다 (브라우저 `EventSource` 는 comment를 무시합니다).
+
+### WebSocket 메시지
+
+클라이언트 → 서버 메시지는 JSON입니다. 형식이 맞지 않는 메시지는 무시합니다. 서버 → 클라이언트는 쉘 출력 텍스트 그대로입니다.
+
+| type | 예시 | 설명 |
+|---|---|---|
+| `input` | `{"type":"input","data":"ls\r"}` | 쉘 입력 |
+| `resize` | `{"type":"resize","cols":120,"rows":30}` | 컨테이너 TTY 크기 변경 (1~500) |
 
 ### 실습 흐름
 
 1. 프론트엔드가 `/api/logs?labId={labId}` 로 SSE 구독을 엽니다.
-2. 같은 `labId` 로 `/ws/terminal?labId={labId}` 에 WebSocket을 연결합니다.
+2. SSE가 열리면 같은 `labId` 로 `/ws/terminal?labId={labId}` 에 WebSocket을 연결합니다 (SSE 구독 전에 나온 로그는 전달되지 않으므로 순서를 지킵니다).
 3. 백엔드가 실습 컨테이너를 생성하고, eBPF 에이전트에 해당 컨테이너의 로그 스트림을 요청한 뒤 쉘을 연결합니다.
 4. 쉘 출력은 WebSocket으로, eBPF 로그는 SSE로 전달됩니다.
 5. WebSocket 연결이 종료되면 컨테이너를 삭제하고 SSE 연결도 종료합니다.

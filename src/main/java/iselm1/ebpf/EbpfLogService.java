@@ -62,6 +62,15 @@ public class EbpfLogService implements DisposableBean {
         if (previous != null) {
             previous.complete();
         }
+
+        // 첫 이벤트 전까지는 응답 헤더가 나가지 않아 브라우저 EventSource 의 onopen 이 늦어진다.
+        // 구독 직후 comment 를 보내 연결을 바로 열어 둔다 (EventSource 는 comment 를 무시한다).
+        try {
+            emitter.send(SseEmitter.event().comment("connected"));
+        } catch (IOException | IllegalStateException e) {
+            emitters.remove(labId, emitter);
+            emitter.completeWithError(e);
+        }
         return emitter;
     }
 
