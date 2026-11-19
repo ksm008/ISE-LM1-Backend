@@ -32,7 +32,8 @@ public class DockerConfig {
                 .sslConfig(config.getSSLConfig())
                 .maxConnections(100)
                 .connectionTimeout(Duration.ofSeconds(30))
-                .responseTimeout(Duration.ofSeconds(45))
+                // responseTimeout 은 지정하지 않는다. 지정하면 쉘(exec) 출력 스트림에도 소켓 읽기 제한으로 적용되어,
+                // 그 시간 동안 출력이 없으면 스트림이 끊겨 터미널이 응답하지 않는다.
                 .build();
 
         return DockerClientImpl.getInstance(config, httpClient);

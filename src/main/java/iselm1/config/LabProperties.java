@@ -42,7 +42,8 @@ public record LabProperties(
 
     public record Session(
             @DefaultValue("10") int maxSessions,
-            @DefaultValue("30m") Duration idleTimeout,
+            /** 실습 세션 유지 시간. 갱신(renew) 요청을 받으면 그 시점부터 다시 이 시간만큼 연장한다. */
+            @DefaultValue("10m") Duration lease,
             @DefaultValue("30m") Duration sseTimeout
     ) {}
 }

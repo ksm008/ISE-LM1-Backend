@@ -14,6 +14,7 @@ import iselm1.ebpf.EbpfLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.DisposableBean;
+import org.springframework.beans.factory.InitializingBean;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
@@ -32,17 +33,20 @@ import java.io.IOException;
 import java.io.PipedInputStream;
 import java.io.PipedOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
-public class TerminalWebSocketHandler extends TextWebSocketHandler implements DisposableBean {
+public class TerminalWebSocketHandler extends TextWebSocketHandler implements InitializingBean, DisposableBean {
 
     /** 이 서버가 만든 실습 컨테이너 표시. 남은 컨테이너 정리에 사용한다. */
     private static final String LAB_LABEL = "iselm1.lab";
@@ -66,14 +70,28 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
     private final Map<String, String> sessionExecIds = new ConcurrentHashMap<>();
     private final Map<String, PipedOutputStream> inputStreams = new ConcurrentHashMap<>();
     private final Map<String, ResultCallback.Adapter<Frame>> callbacks = new ConcurrentHashMap<>();
+    /** 셸 연결까지 끝난 세션 (ConcurrentWebSocketSessionDecorator) */
+    private final Map<String, WebSocketSession> openSessions = new ConcurrentHashMap<>();
+    /** 세션 만료 시각 (epoch millis) */
+    private final Map<String, Long> leaseDeadlines = new ConcurrentHashMap<>();
+    private final ScheduledExecutorService leaseSweeper = Executors.newSingleThreadScheduledExecutor(r -> {
+        Thread t = new Thread(r, "lab-lease-sweeper");
+        t.setDaemon(true);
+        return t;
+    });
+
+    @Override
+    public void afterPropertiesSet() {
+        leaseSweeper.scheduleWithFixedDelay(this::sweepExpiredSessions, 1, 1, TimeUnit.SECONDS);
+    }
 
     @Override
     public void afterConnectionEstablished(WebSocketSession rawSession) throws Exception {
         rawSession.setTextMessageSizeLimit(MAX_TEXT_MESSAGE_BYTES);
         if (rawSession instanceof NativeWebSocketSession nws
                 && nws.getNativeSession() instanceof jakarta.websocket.Session nativeSession) {
-            // 입력이 없으면 연결을 끊고, 끊기면 컨테이너도 삭제된다.
-            nativeSession.setMaxIdleTimeout(labProperties.session().idleTimeout().toMillis());
+            // 세션 만료는 sweepExpiredSessions 가 처리한다. 이것은 응답 없는 연결을 끊기 위한 안전장치다.
+            nativeSession.setMaxIdleTimeout(labProperties.session().lease().plusMinutes(1).toMillis());
         }
 
         // Docker 출력 스레드와 요청 스레드가 동시에 보내도 안전하도록 감싼다.
@@ -111,7 +129,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
             try {
                 dockerClient.inspectImageCmd(image).exec();
             } catch (NotFoundException e) {
-                session.sendMessage(new TextMessage("이미지 다운로드 중...\r\n"));
+                sendOutput(session, "이미지 다운로드 중...\r\n");
                 dockerClient.pullImageCmd(image).start().awaitCompletion();
             }
 
@@ -146,12 +164,29 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
                 public void onNext(Frame frame) {
                     if (session.isOpen()) {
                         try {
-                            String output = new String(frame.getPayload(), StandardCharsets.UTF_8);
-                            session.sendMessage(new TextMessage(output));
+                            sendOutput(session, new String(frame.getPayload(), StandardCharsets.UTF_8));
                         } catch (IOException e) {
                             log.debug("터미널 출력 전송 실패 (session={})", sessionId, e);
                         }
                     }
+                }
+
+                // 셸이 끝나면(exit 등) 연결도 닫는다. 닫히면 afterConnectionClosed 에서 컨테이너를 정리한다.
+                // 콜백 스레드는 super.onComplete()/onError() 에서 인터럽트되어 close 프레임을 보내지 못하므로
+                // 다른 스레드에서 닫는다.
+                @Override
+                public void onComplete() {
+                    super.onComplete();
+                    leaseSweeper.execute(() ->
+                            closeQuietly(session, CloseStatus.NORMAL.withReason("셸이 종료되었습니다")));
+                }
+
+                @Override
+                public void onError(Throwable throwable) {
+                    super.onError(throwable);
+                    log.debug("셸 스트림 오류 (session={})", sessionId, throwable);
+                    leaseSweeper.execute(() ->
+                            closeQuietly(session, CloseStatus.SERVER_ERROR.withReason("셸 연결이 끊어졌습니다")));
                 }
             };
             callbacks.put(sessionId, callback);
@@ -169,6 +204,10 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
             }
             sessionExecIds.put(sessionId, execId);
 
+            // 4. 세션 유지 시간 시작
+            openSessions.put(sessionId, session);
+            renewLease(session);
+
         } catch (Exception e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -177,7 +216,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
             cleanupSession(sessionId);
             if (session.isOpen()) {
                 // 내부 오류 내용(호스트 주소 등)은 클라이언트에 보내지 않는다.
-                session.sendMessage(new TextMessage("실습 컨테이너를 시작하지 못했습니다.\r\n"));
+                sendOutput(session, "실습 컨테이너를 시작하지 못했습니다.\r\n");
                 session.close(CloseStatus.SERVER_ERROR.withReason("컨테이너 시작 실패"));
             }
         }
@@ -198,8 +237,11 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
      * <ul>
      *   <li>{@code {"type":"input","data":"ls\r"}} : 셸 입력</li>
      *   <li>{@code {"type":"resize","cols":120,"rows":30}} : 터미널 크기 변경</li>
+     *   <li>{@code {"type":"renew"}} : 세션 유지 시간 갱신</li>
      * </ul>
      * 형식이 맞지 않는 메시지는 무시한다.
+     * <p>
+     * 서버 메시지도 JSON 이다: {@code {"type":"output","data":"..."}}, {@code {"type":"session","remainingSeconds":600}}
      */
     @Override
     protected void handleTextMessage(WebSocketSession session, TextMessage message) throws Exception {
@@ -223,7 +265,60 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
                 }
             }
             case "resize" -> resizeTerminal(session.getId(), node.path("cols").asInt(0), node.path("rows").asInt(0));
+            case "renew" -> {
+                // 전송은 동시 전송에 안전한 decorator 로 한다.
+                WebSocketSession decorated = openSessions.get(session.getId());
+                if (decorated != null) {
+                    renewLease(decorated);
+                }
+            }
             default -> { /* 알 수 없는 type 은 무시 */ }
+        }
+    }
+
+    /** 지금부터 lease 만큼 세션을 연장하고, 남은 시간을 클라이언트에 알린다. */
+    private void renewLease(WebSocketSession session) throws IOException {
+        Duration lease = labProperties.session().lease();
+        leaseDeadlines.put(session.getId(), System.currentTimeMillis() + lease.toMillis());
+        sendJson(session, Map.of("type", "session", "remainingSeconds", lease.toSeconds()));
+    }
+
+    private void sweepExpiredSessions() {
+        long now = System.currentTimeMillis();
+        leaseDeadlines.forEach((sessionId, deadline) -> {
+            if (deadline > now || !leaseDeadlines.remove(sessionId, deadline)) {
+                return;
+            }
+            WebSocketSession session = openSessions.get(sessionId);
+            if (session == null) {
+                return;
+            }
+            try {
+                sendOutput(session, "\r\n세션 시간이 만료되어 실습을 종료합니다.\r\n");
+            } catch (IOException | IllegalStateException e) {
+                log.debug("만료 안내 전송 실패 (session={})", sessionId, e);
+            }
+            // 닫히면 afterConnectionClosed 에서 컨테이너를 정리한다.
+            closeQuietly(session, CloseStatus.NORMAL.withReason("세션 시간 만료"));
+        });
+    }
+
+    private void sendOutput(WebSocketSession session, String data) throws IOException {
+        sendJson(session, Map.of("type", "output", "data", data));
+    }
+
+    private void sendJson(WebSocketSession session, Map<String, ?> message) throws IOException {
+        session.sendMessage(new TextMessage(jsonMapper.writeValueAsString(message)));
+    }
+
+    private void closeQuietly(WebSocketSession session, CloseStatus status) {
+        if (!session.isOpen()) {
+            return;
+        }
+        try {
+            session.close(status);
+        } catch (IOException | IllegalStateException e) {
+            log.debug("WebSocket 종료 실패 (session={})", session.getId(), e);
         }
     }
 
@@ -245,6 +340,8 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
     }
 
     private void cleanupSession(String sessionId) {
+        openSessions.remove(sessionId);
+        leaseDeadlines.remove(sessionId);
         sessionExecIds.remove(sessionId);
         PipedOutputStream out = inputStreams.remove(sessionId);
         if (out != null) {
@@ -308,6 +405,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements Di
     /** 서버 종료 시 실행 중인 실습 컨테이너를 모두 삭제한다. */
     @Override
     public void destroy() {
+        leaseSweeper.shutdownNow();
         sessionContainers.keySet().forEach(this::cleanupSession);
     }
 }
