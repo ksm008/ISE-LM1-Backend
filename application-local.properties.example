@@ -1,0 +1,6 @@
+# 복사해서 application-local.properties 로 사용 (git 에 포함되지 않음)
+lab.docker.host=tcp://<실습 서버 주소>:2376
+lab.docker.tls-verify=true
+lab.docker.cert-path=C:/path/to/docker-certs
+lab.ebpf.agent-url=http://<실습 서버 주소>:9000
+lab.cors.allowed-origins=http://localhost:5173

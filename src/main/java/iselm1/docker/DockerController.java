@@ -1,36 +1,34 @@
 package iselm1.docker;
 
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.command.CreateContainerResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Map;
+
+/**
+ * 실습 서버의 Docker 연결 상태 확인용 API.
+ * 컨테이너를 만들지 않고 Docker Engine 에 ping 만 보낸다.
+ */
+@Slf4j
 @RestController
 @RequiredArgsConstructor
 public class DockerController {
 
     private final DockerClient dockerClient;
 
-    @GetMapping("/start-container")
-    public String startContainer() {
-        String imageName = "arm64v8/alpine:latest";
-
+    @GetMapping("/api/docker/health")
+    public ResponseEntity<Map<String, String>> health() {
         try {
-            dockerClient.pullImageCmd(imageName).start().awaitCompletion();
-
-            CreateContainerResponse container = dockerClient.createContainerCmd(imageName)
-                    .withCmd("sh", "-c", "while true; do sleep 3600; done")
-                    .exec();
-
-            dockerClient.startContainerCmd(container.getId()).exec();
-
-            return "컨테이너 원격 생성 및 실행 성공! Container ID : " + container.getId();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return "컨테이너 이미지 다운로드 중 에러 발생";
+            dockerClient.pingCmd().exec();
+            return ResponseEntity.ok(Map.of("status", "UP"));
         } catch (Exception e) {
-            return "컨테이너 실행 실패: " + e.getMessage();
+            log.warn("Docker 연결 확인 실패", e);
+            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("status", "DOWN"));
         }
     }
 }
