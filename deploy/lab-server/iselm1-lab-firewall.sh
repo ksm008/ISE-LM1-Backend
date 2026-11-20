@@ -16,6 +16,9 @@ BRIDGE="${BRIDGE:-docker0}"
 DNS_SERVER="${DNS_SERVER:-169.254.169.254}"
 ISOLATE_CONTAINERS="${ISOLATE_CONTAINERS:-1}"
 BLOCK_PRIVATE="${BLOCK_PRIVATE:-1}"
+# Docker 로 공개한 포트 중 이 인터페이스(Tailscale)에서만 접속을 허용할 포트 (공백으로 여러 개). 회원 DB(PostgreSQL)
+PRIVATE_PORTS="${PRIVATE_PORTS:-5432}"
+PRIVATE_IFACE="${PRIVATE_IFACE:-tailscale0}"
 
 ipt() { iptables -w "$@"; }
 reject() { ipt -A "$@" -j REJECT --reject-with icmp-admin-prohibited; }
@@ -26,6 +29,11 @@ remove_rules() {
     done
     ipt -t mangle -F ISELM1-LAB-PRE 2>/dev/null || true
     ipt -t mangle -X ISELM1-LAB-PRE 2>/dev/null || true
+    while ipt -C DOCKER-USER -j ISELM1-PRIVATE 2>/dev/null; do
+        ipt -D DOCKER-USER -j ISELM1-PRIVATE
+    done
+    ipt -F ISELM1-PRIVATE 2>/dev/null || true
+    ipt -X ISELM1-PRIVATE 2>/dev/null || true
     while ipt -C DOCKER-USER -i "$BRIDGE" -j ISELM1-LAB-FWD 2>/dev/null; do
         ipt -D DOCKER-USER -i "$BRIDGE" -j ISELM1-LAB-FWD
     done
@@ -65,6 +73,16 @@ fi
 
 ipt -N DOCKER-USER 2>/dev/null || true
 ipt -C DOCKER-USER -i "$BRIDGE" -j ISELM1-LAB-FWD 2>/dev/null || ipt -I DOCKER-USER 1 -i "$BRIDGE" -j ISELM1-LAB-FWD
+
+# ---- 1-0. Tailscale 에서만 쓰는 공개 포트 (회원 DB 등) ----
+# Docker 가 공개한 포트는 INPUT 이 아니라 FORWARD(DOCKER-USER)를 지나므로 여기서 거른다.
+# DNAT 뒤에도 원래 목적지 포트로 맞추고(ctorigdstport), 응답 방향 패킷은 건드리지 않는다(ctdir ORIGINAL).
+ipt -N ISELM1-PRIVATE 2>/dev/null || true
+ipt -F ISELM1-PRIVATE
+for port in $PRIVATE_PORTS; do
+    ipt -A ISELM1-PRIVATE -p tcp -m conntrack --ctdir ORIGINAL --ctorigdstport "$port" ! -i "$PRIVATE_IFACE" -j DROP
+done
+ipt -C DOCKER-USER -j ISELM1-PRIVATE 2>/dev/null || ipt -I DOCKER-USER 1 -j ISELM1-PRIVATE
 
 # ---- 1-1. Tailscale 등 CGNAT 대역(100.64.0.0/10) ----
 # Tailscale 은 FORWARD 맨 앞의 ts-forward 에서 "-o tailscale0 -j ACCEPT" 로 먼저 허용하므로 DOCKER-USER 까지 오지 않는다.

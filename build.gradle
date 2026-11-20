@@ -30,6 +30,19 @@ dependencies {
     implementation 'com.github.docker-java:docker-java:3.3.6'
     implementation 'com.github.docker-java:docker-java-transport-httpclient5:3.3.6'
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // ---- 회원 (로그인, 회원가입, 이메일 인증, 구글 연동) ----
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-security-oauth2-client'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+    testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
+    // 자동 테스트에서만 쓰는 메모리 DB (실제 DB 는 PostgreSQL)
+    testRuntimeOnly 'com.h2database:h2'
 }
 
 tasks.named('test') {

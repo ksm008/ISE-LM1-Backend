@@ -5,10 +5,28 @@
 
 | 폴더 | 내용 | 적용 위치 |
 |---|---|---|
+| `db/` | 회원 DB(PostgreSQL 17) 컨테이너 실행 스크립트 | 실습 서버 `~/iselm1-db` |
 | `lab-image/` | 실습 컨테이너 이미지 (`sec-lab-ubuntu`) Dockerfile | 실습 서버 `~/sec-lab-image` |
 | `lab-server/` | 실습 컨테이너 방화벽 (메타데이터·호스트·다른 컨테이너 접근 차단) | 실습 서버 |
 | `docker-tls/` | Docker API TLS 인증서 생성 스크립트, dockerd 설정 | 실습 서버 + 백엔드 PC |
 | `nginx/` | 프론트·백엔드를 한 도메인으로 묶는 Nginx 설정 예시 | 배포 서버 |
+
+## DB. 회원 DB (PostgreSQL)
+
+```bash
+mkdir -p ~/iselm1-db && cp run-postgres.sh ~/iselm1-db/ && ~/iselm1-db/run-postgres.sh
+```
+
+| 항목 | 값 |
+|---|---|
+| 컨테이너 | `iselm1-postgres` (`postgres:17`, `--restart unless-stopped`, 메모리 1GB) |
+| 네트워크 / 데이터 | Docker 네트워크 `iselm1-db`, 볼륨 `iselm1-pgdata` (컨테이너를 지워도 유지) |
+| 접속 정보 | `~/iselm1-db/.env` (권한 600, 처음 실행 시 비밀번호 무작위 생성). 같은 값을 백엔드 `application-local.properties` 의 `spring.datasource.*` 에 넣습니다 |
+| 접근 | 5432 는 Tailscale(`tailscale0`)에서만 허용 (방화벽 스크립트의 `PRIVATE_PORTS`). 실습 컨테이너에서는 닿지 않습니다 |
+
+- 테이블은 백엔드가 시작할 때 Flyway 로 만듭니다(`src/main/resources/db/migration`).
+- 백업 예: `sudo docker exec iselm1-postgres pg_dump -U iselm1 iselm1 > iselm1-$(date +%F).sql`
+- 실습 컨테이너 정리 라벨(`iselm1.lab`)을 붙이지 않으므로 백엔드가 시작할 때 지워지지 않습니다.
 
 ## 0. 실습 컨테이너 이미지
 
@@ -51,6 +69,7 @@ sudo docker build -t sec-lab-ubuntu:1.2 .
 | 실습 서버 호스트 자신 | SSH, Docker API, eBPF 에이전트 등 호스트 서비스 |
 | 같은 브리지의 다른 컨테이너 (`ISOLATE_CONTAINERS=1`) | 다른 수강생의 실습 컨테이너 공격 |
 | 사설망 `10/8`, `172.16/12`, `192.168/16`, `100.64/10` (`BLOCK_PRIVATE=1`) | VCN 안의 다른 서버, Tailscale 망의 다른 기기 |
+| Docker 로 공개한 `PRIVATE_PORTS`(기본 5432)를 `tailscale0` 밖에서 접속 | 회원 DB 는 Tailscale 에서만 접속 (`ISELM1-PRIVATE`, DNAT 뒤에도 원래 포트로 거름) |
 
 - Tailscale 은 FORWARD 맨 앞의 `ts-forward` 에서 `tailscale0` 로 나가는 트래픽을 먼저 허용합니다. 그래서 `100.64.0.0/10` 은 그보다 앞서 처리되는 `mangle PREROUTING`(`ISELM1-LAB-PRE`)에서 버립니다.
 
@@ -152,7 +171,7 @@ lab.docker.cert-path=C:/Users/<사용자>/.docker/iselm1
 | 4 | `nginx/iselm1.conf.example` 을 `/etc/nginx/sites-available/iselm1.conf` 로 복사하고 도메인 수정 → `sites-enabled` 에 링크 |
 | 5 | `sudo certbot --nginx -d example.com` (인증서 발급, 자동 갱신) |
 | 6 | 프론트: `VITE_API_BASE_URL=https://example.com npm run build` → `dist/` 를 `/var/www/iselm1` 로 복사 |
-| 7 | 백엔드: `lab.cors.allowed-origins=https://example.com` 으로 실행 (systemd 서비스 등) |
+| 7 | 백엔드: `lab.cors.allowed-origins=https://example.com`, `auth.frontend-url=https://example.com` 으로 실행 (systemd 서비스 등). 구글 OAuth 클라이언트에 `https://example.com/login/oauth2/code/google` 리디렉션 URI 추가 |
 | 8 | `sudo nginx -t && sudo systemctl reload nginx` |
 
 - `/ws/` 는 WebSocket 업그레이드 헤더를 넘기고 `proxy_read_timeout` 을 실습 세션(10분)보다 길게 둡니다. 기본 60초면 입력이 없는 동안 터미널이 끊깁니다.
