@@ -1,0 +1,12 @@
+# /etc/securetty: root 가 직접 로그인할 수 있는 터미널 목록
+# login 의 PAM(/etc/pam.d/login) 에서 pam_securetty.so 가 이 파일을 검사한다.
+# 여기에 없는 터미널(예: 원격 접속의 pts/*)에서는 root 로 바로 로그인할 수 없다.
+console
+tty1
+tty2
+tty3
+tty4
+tty5
+tty6
+ttyS0
+ttyS1

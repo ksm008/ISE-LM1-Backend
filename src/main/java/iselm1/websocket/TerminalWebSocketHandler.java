@@ -5,11 +5,13 @@ import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.command.CreateContainerResponse;
 import com.github.dockerjava.api.command.ExecCreateCmdResponse;
 import com.github.dockerjava.api.exception.NotFoundException;
+import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
 import iselm1.config.LabIds;
 import iselm1.config.LabProperties;
+import iselm1.docker.LabContainerSetup;
 import iselm1.ebpf.EbpfLogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -59,6 +61,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
 
     private final DockerClient dockerClient;
     private final EbpfLogService ebpfLogService;
+    private final LabContainerSetup labContainerSetup;
     private final LabProperties labProperties;
     private final JsonMapper jsonMapper;
 
@@ -72,6 +75,8 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
     private final Map<String, ResultCallback.Adapter<Frame>> callbacks = new ConcurrentHashMap<>();
     /** 셸 연결까지 끝난 세션 (ConcurrentWebSocketSessionDecorator) */
     private final Map<String, WebSocketSession> openSessions = new ConcurrentHashMap<>();
+    /** 셸 연결까지 끝난 실습의 labId → 컨테이너 ID (패킷 캡처에서 사용) */
+    private final Map<String, String> labContainers = new ConcurrentHashMap<>();
     /** 세션 만료 시각 (epoch millis) */
     private final Map<String, Long> leaseDeadlines = new ConcurrentHashMap<>();
     private final ScheduledExecutorService leaseSweeper = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -143,10 +148,13 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
             sessionContainers.put(sessionId, containerId);
             dockerClient.startContainerCmd(containerId).exec();
 
-            // 2. eBPF 로그 스트리밍 시작
+            // 2. 사용자 셸을 붙이기 전에 준비 작업 (이미지 초기화, apt 패키지 설치 차단)
+            labContainerSetup.apply(containerId);
+
+            // 3. eBPF 로그 스트리밍 시작 (SSE 구독이 있을 때만)
             ebpfLogService.startStreaming(labId, containerId);
 
-            // 3. 컨테이너 셸(Exec) 연결
+            // 4. 컨테이너 셸(Exec) 연결
             ExecCreateCmdResponse execCreateCmdResponse = dockerClient.execCreateCmd(containerId)
                     .withAttachStdout(true)
                     .withAttachStderr(true)
@@ -204,8 +212,9 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
             }
             sessionExecIds.put(sessionId, execId);
 
-            // 4. 세션 유지 시간 시작
+            // 5. 세션 유지 시간 시작
             openSessions.put(sessionId, session);
+            labContainers.put(labId, containerId);
             renewLease(session);
 
         } catch (Exception e) {
@@ -229,7 +238,9 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
                 .withMemory(memoryBytes)
                 .withMemorySwap(memoryBytes) // 스왑 사용 금지
                 .withNanoCPUs((long) (limits.cpus() * 1_000_000_000L))
-                .withPidsLimit(limits.pidsLimit()); // 포크 폭탄 방지
+                .withPidsLimit(limits.pidsLimit()) // 포크 폭탄 방지
+                // 실습에 필요한 추가 권한 (기본: SYS_PACCT = 프로세스 accounting, lastcomm 용)
+                .withCapAdd(limits.capAdd().stream().map(Capability::valueOf).toArray(Capability[]::new));
     }
 
     /**
@@ -339,7 +350,17 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
         cleanupSession(session.getId());
     }
 
+    /** 실행 중인(셸 연결까지 끝난) 실습의 컨테이너 ID. 없으면 null. */
+    public String containerIdOf(String labId) {
+        return labId == null ? null : labContainers.get(labId);
+    }
+
     private void cleanupSession(String sessionId) {
+        // 컨테이너를 지우기 전에 먼저 빼서, 캡처 쪽이 종료 원인을 "실습 종료"로 알 수 있게 한다.
+        String runningLabId = sessionLabIds.get(sessionId);
+        if (runningLabId != null) {
+            labContainers.remove(runningLabId, sessionContainers.get(sessionId));
+        }
         openSessions.remove(sessionId);
         leaseDeadlines.remove(sessionId);
         sessionExecIds.remove(sessionId);

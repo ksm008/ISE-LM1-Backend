@@ -1,0 +1,55 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          rsyslog
+# Required-Start:    $remote_fs
+# Required-Stop:     $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: enhanced syslogd
+# Description:       Ubuntu 24.04 의 rsyslog 패키지는 systemd 서비스만 있어서, systemd 가 없는
+#                    실습 컨테이너에서 "service rsyslog start|stop|restart|status" 를 쓸 수 있게 한다.
+### END INIT INFO
+
+NAME=rsyslogd
+DAEMON=/usr/sbin/rsyslogd
+PIDFILE=/run/rsyslogd.pid
+
+running() {
+    [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+case "$1" in
+    start)
+        if running; then
+            echo "$NAME is already running"
+            exit 0
+        fi
+        echo " * Starting $NAME"
+        rm -f "$PIDFILE"
+        start-stop-daemon --start --quiet --pidfile "$PIDFILE" --exec "$DAEMON" -- -i "$PIDFILE"
+        ;;
+    stop)
+        echo " * Stopping $NAME"
+        start-stop-daemon --stop --quiet --retry 5 --pidfile "$PIDFILE" --exec "$DAEMON"
+        rm -f "$PIDFILE"
+        ;;
+    restart|force-reload)
+        "$0" stop
+        "$0" start
+        ;;
+    reload)
+        running && kill -HUP "$(cat "$PIDFILE")"
+        ;;
+    status)
+        if running; then
+            echo " * $NAME is running"
+            exit 0
+        fi
+        echo " * $NAME is not running"
+        exit 3
+        ;;
+    *)
+        echo "Usage: service rsyslog {start|stop|restart|reload|status}" >&2
+        exit 1
+        ;;
+esac

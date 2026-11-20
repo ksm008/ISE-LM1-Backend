@@ -1,0 +1,14 @@
+[Unit]
+Description=ISE-LM1 lab container firewall (block metadata, host, other containers)
+# Docker 가 FORWARD/DOCKER-USER 체인을 만든 뒤에 적용하고, Docker 가 재시작되면 함께 다시 적용한다
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/iselm1-lab-firewall.sh
+ExecStop=/usr/local/sbin/iselm1-lab-firewall.sh stop
+
+[Install]
+WantedBy=docker.service

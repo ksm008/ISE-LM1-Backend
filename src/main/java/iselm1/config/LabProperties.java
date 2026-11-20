@@ -16,8 +16,17 @@ public record LabProperties(
         @DefaultValue Ebpf ebpf,
         @DefaultValue Cors cors,
         @DefaultValue Container container,
-        @DefaultValue Session session
+        @DefaultValue Session session,
+        @DefaultValue Capture capture
 ) {
+
+    /** 패킷 캡처 (Wireshark 실습) */
+    public record Capture(
+            /** 패킷 하나에서 캡처하는 최대 바이트 (tcpdump -s) */
+            @DefaultValue("4096") int snaplen,
+            /** 캡처 한 번에 받는 최대 패킷 수. 넘으면 캡처를 중지한다. */
+            @DefaultValue("20000") int maxPackets
+    ) {}
 
     public record Docker(
             @DefaultValue("tcp://localhost:2375") String host,
@@ -34,10 +43,17 @@ public record LabProperties(
     ) {}
 
     public record Container(
-            @DefaultValue("sec-lab-ubuntu:1.0") String image,
+            @DefaultValue("sec-lab-ubuntu:1.2") String image,
             @DefaultValue("512") long memoryMb,
             @DefaultValue("1.0") double cpus,
-            @DefaultValue("256") long pidsLimit
+            @DefaultValue("256") long pidsLimit,
+            /** true 이면 실습 컨테이너에서 apt 로 패키지를 설치하지 못하게 한다 (sudo 사용 포함). */
+            @DefaultValue("true") boolean blockPackageInstall,
+            /**
+             * 컨테이너에 추가할 Linux capability (Docker 기본값에 더해서).
+             * SYS_PACCT: 프로세스 accounting(accton) 사용. PID 네임스페이스별로 동작해 호스트 프로세스는 기록되지 않는다.
+             */
+            @DefaultValue("SYS_PACCT") List<String> capAdd
     ) {}
 
     public record Session(

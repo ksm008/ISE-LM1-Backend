@@ -74,7 +74,15 @@ public class EbpfLogService implements DisposableBean {
         return emitter;
     }
 
+    /**
+     * 컨테이너의 eBPF 로그를 에이전트에서 받아 SSE 로 중계한다.
+     * 이 labId 의 SSE 구독이 없으면(프론트의 eBPF 로그 패널을 쓰지 않으면) 에이전트에 연결하지 않는다.
+     * 패널을 쓸 때는 프론트가 SSE 를 연 뒤 WebSocket 을 연결하므로, 이 시점에 구독이 있다.
+     */
     public void startStreaming(String labId, String containerId) {
+        if (!emitters.containsKey(labId)) {
+            return;
+        }
         executor.submit(() -> {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(streamUrl + URLEncoder.encode(containerId, StandardCharsets.UTF_8)))
