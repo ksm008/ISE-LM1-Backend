@@ -9,6 +9,7 @@ import com.github.dockerjava.api.model.Capability;
 import com.github.dockerjava.api.model.Container;
 import com.github.dockerjava.api.model.Frame;
 import com.github.dockerjava.api.model.HostConfig;
+import iselm1.auth.AuthUser;
 import iselm1.config.LabIds;
 import iselm1.config.LabProperties;
 import iselm1.docker.LabContainerSetup;
@@ -77,6 +78,14 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
     private final Map<String, WebSocketSession> openSessions = new ConcurrentHashMap<>();
     /** 셸 연결까지 끝난 실습의 labId → 컨테이너 ID (패킷 캡처에서 사용) */
     private final Map<String, String> labContainers = new ConcurrentHashMap<>();
+    /** labId → 실습을 시작한 계정 ID */
+    private final Map<String, Long> labOwners = new ConcurrentHashMap<>();
+    /** 계정 ID → 그 계정의 실습 WebSocket 세션 ID (사용자당 실습 하나) */
+    private final Map<Long, String> userSessions = new ConcurrentHashMap<>();
+    /** 세션 ID → 계정 ID */
+    private final Map<String, Long> sessionAccounts = new ConcurrentHashMap<>();
+    /** 받아들인 모든 세션 (셸 준비 전 포함, 이전 실습을 닫을 때 사용) */
+    private final Map<String, WebSocketSession> liveSessions = new ConcurrentHashMap<>();
     /** 세션 만료 시각 (epoch millis) */
     private final Map<String, Long> leaseDeadlines = new ConcurrentHashMap<>();
     private final ScheduledExecutorService leaseSweeper = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -113,11 +122,28 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
             session.close(CloseStatus.POLICY_VIOLATION.withReason("잘못된 labId"));
             return;
         }
+        Long accountId = AuthUser.idOf(rawSession.getPrincipal());
+        if (accountId == null) {
+            session.close(CloseStatus.POLICY_VIOLATION.withReason("로그인이 필요합니다"));
+            return;
+        }
         if (!activeLabIds.add(labId)) {
             session.close(CloseStatus.POLICY_VIOLATION.withReason("이미 사용 중인 labId"));
             return;
         }
         sessionLabIds.put(sessionId, labId);
+        sessionAccounts.put(sessionId, accountId);
+        liveSessions.put(sessionId, session);
+
+        // 사용자당 실습 하나: 같은 계정의 이전 실습은 닫는다 (닫히면 afterConnectionClosed 에서 컨테이너 정리).
+        // 거부하지 않고 이어받는 이유: 네트워크가 끊긴 이전 연결이 서버에 남아 있어도 바로 새 실습을 열 수 있게.
+        String previous = userSessions.put(accountId, sessionId);
+        if (previous != null) {
+            WebSocketSession old = liveSessions.get(previous);
+            if (old != null) {
+                closeQuietly(old, CloseStatus.NORMAL.withReason("다른 창에서 새 실습을 시작해 이 실습을 종료했습니다"));
+            }
+        }
 
         if (activeSessions.incrementAndGet() > labProperties.session().maxSessions()) {
             activeSessions.decrementAndGet();
@@ -212,9 +238,16 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
             }
             sessionExecIds.put(sessionId, execId);
 
+            // 준비하는 동안 연결이 닫혔으면(다른 창에서 새 실습 시작, 탭 닫기) 만든 컨테이너를 정리한다
+            if (!rawSession.isOpen()) {
+                cleanupSession(sessionId);
+                return;
+            }
+
             // 5. 세션 유지 시간 시작
             openSessions.put(sessionId, session);
             labContainers.put(labId, containerId);
+            labOwners.put(labId, accountId);
             renewLease(session);
 
         } catch (Exception e) {
@@ -355,11 +388,22 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
         return labId == null ? null : labContainers.get(labId);
     }
 
+    /** 이 계정이 시작한 실습인지 (패킷 캡처 등 다른 연결에서 확인) */
+    public boolean isOwner(String labId, Long accountId) {
+        return labId != null && accountId != null && accountId.equals(labOwners.get(labId));
+    }
+
     private void cleanupSession(String sessionId) {
         // 컨테이너를 지우기 전에 먼저 빼서, 캡처 쪽이 종료 원인을 "실습 종료"로 알 수 있게 한다.
         String runningLabId = sessionLabIds.get(sessionId);
         if (runningLabId != null) {
             labContainers.remove(runningLabId, sessionContainers.get(sessionId));
+            labOwners.remove(runningLabId);
+        }
+        liveSessions.remove(sessionId);
+        Long accountId = sessionAccounts.remove(sessionId);
+        if (accountId != null) {
+            userSessions.remove(accountId, sessionId); // 이미 새 실습으로 바뀌었으면 그대로 둔다
         }
         openSessions.remove(sessionId);
         leaseDeadlines.remove(sessionId);

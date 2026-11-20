@@ -18,6 +18,15 @@ import java.util.List;
 public record AuthUser(Long id, String username, String passwordHash, Account.Role role, boolean emailVerified)
         implements UserDetails {
 
+    /** WebSocket 등에서 받은 로그인 정보(Authentication)의 계정 ID. 로그인하지 않았으면 null */
+    public static Long idOf(java.security.Principal principal) {
+        if (principal instanceof org.springframework.security.core.Authentication auth
+                && auth.getPrincipal() instanceof AuthUser user) {
+            return user.id();
+        }
+        return null;
+    }
+
     /** 세션용 (비밀번호 해시 없음) */
     public static AuthUser of(Account account) {
         return new AuthUser(account.getId(), account.getUsername(), null, account.getRole(), account.isEmailVerified());

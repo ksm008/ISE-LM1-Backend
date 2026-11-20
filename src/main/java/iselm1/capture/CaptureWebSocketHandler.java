@@ -3,6 +3,7 @@ package iselm1.capture;
 import com.github.dockerjava.api.DockerClient;
 import com.github.dockerjava.api.async.ResultCallback;
 import com.github.dockerjava.api.model.Frame;
+import iselm1.auth.AuthUser;
 import iselm1.config.LabIds;
 import iselm1.config.LabProperties;
 import iselm1.docker.DockerExecs;
@@ -47,7 +48,8 @@ import java.util.regex.Pattern;
  * 패킷 캡처 WebSocket ({@code /ws/capture?labId=}). Wireshark 실습 화면이 사용한다.
  * <p>
  * 실행 중인 터미널 실습 컨테이너 안에서 root 로 tcpdump 를 실행하고, pcap 출력을 패킷 단위로 나눠
- * 브라우저로 보낸다. 프로토콜 해석은 브라우저에서 한다. 연결은 labId 하나당 하나만 허용한다.
+ * 브라우저로 보낸다. 프로토콜 해석은 브라우저에서 한다. 연결은 labId 하나당 하나이며,
+ * 같은 labId 로 새 연결이 오면 이전 연결을 닫고 새 연결이 이어받는다.
  * <ul>
  *   <li>클라이언트 → 서버: {@code {"type":"start","interface":"any","filter":"icmp"}}, {@code {"type":"stop"}}</li>
  *   <li>서버 → 클라이언트: {@code ready}(인터페이스 목록), {@code started}(linkType), {@code packets}, {@code stopped}, {@code error}</li>
@@ -81,7 +83,9 @@ public class CaptureWebSocketHandler extends TextWebSocketHandler implements Dis
     private final LabProperties labProperties;
     private final JsonMapper jsonMapper;
 
-    private final Set<String> busyLabIds = ConcurrentHashMap.newKeySet();
+    /** labId → 현재 캡처 연결 (labId 당 하나, 새 연결이 오면 이전 연결을 닫는다) */
+    private final Map<String, Connection> labConnections = new ConcurrentHashMap<>();
+    /** WebSocket 세션 ID → 연결 */
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, r -> {
         Thread t = new Thread(r, "lab-capture");
@@ -120,11 +124,20 @@ public class CaptureWebSocketHandler extends TextWebSocketHandler implements Dis
             session.close(CloseStatus.POLICY_VIOLATION.withReason("실행 중인 터미널 실습이 없습니다"));
             return;
         }
-        if (!busyLabIds.add(labId)) {
-            session.close(CloseStatus.POLICY_VIOLATION.withReason("이미 다른 창에서 캡처 화면을 사용 중입니다"));
+        // 자기 실습만 캡처할 수 있다 (labId 를 알아도 다른 사람의 실습에는 붙을 수 없음)
+        if (!terminalHandler.isOwner(labId, AuthUser.idOf(rawSession.getPrincipal()))) {
+            session.close(CloseStatus.POLICY_VIOLATION.withReason("이 실습을 캡처할 권한이 없습니다"));
             return;
         }
-        connections.put(rawSession.getId(), new Connection(session, labId));
+        // 같은 실습의 캡처 연결은 하나만 둔다. 새 연결을 받고 이전 연결은 닫는다.
+        // (새로고침, 다른 탭, 개발 모드 React StrictMode 의 이중 연결에서 마지막 연결이 이어받게 한다)
+        Connection conn = new Connection(session, labId);
+        connections.put(rawSession.getId(), conn);
+        Connection previous = labConnections.put(labId, conn);
+        if (previous != null) {
+            stopCurrent(previous, "다른 창에서 캡처 화면을 열었습니다.");
+            closeQuietly(previous.session, CloseStatus.NORMAL.withReason("다른 창에서 캡처 화면을 열었습니다"));
+        }
 
         LabProperties.Capture limits = labProperties.capture();
         Map<String, Object> ready = new LinkedHashMap<>();
@@ -503,7 +516,8 @@ public class CaptureWebSocketHandler extends TextWebSocketHandler implements Dis
             return;
         }
         stopCurrent(conn, "연결이 종료되었습니다.");
-        busyLabIds.remove(conn.labId);
+        // 이미 새 연결로 바뀌었으면 그대로 둔다
+        labConnections.remove(conn.labId, conn);
     }
 
     @Override
