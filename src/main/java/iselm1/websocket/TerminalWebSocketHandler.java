@@ -53,6 +53,8 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
 
     /** 이 서버가 만든 실습 컨테이너 표시. 남은 컨테이너 정리에 사용한다. */
     private static final String LAB_LABEL = "iselm1.lab";
+    /** 컨테이너를 만든 백엔드 이름 (lab.container.instance). 정리는 이 값이 같은 컨테이너만 한다. */
+    private static final String INSTANCE_LABEL = LAB_LABEL + ".instance";
     private static final int SEND_TIME_LIMIT_MS = 10_000;
     private static final int SEND_BUFFER_LIMIT_BYTES = 512 * 1024;
     /** 터미널 입력 한 번(붙여넣기 포함)의 최대 크기 */
@@ -65,6 +67,8 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
     private final LabContainerSetup labContainerSetup;
     private final LabProperties labProperties;
     private final JsonMapper jsonMapper;
+
+    private String instance;
 
     private final AtomicInteger activeSessions = new AtomicInteger();
     private final Set<String> admittedSessions = ConcurrentHashMap.newKeySet();
@@ -96,6 +100,8 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
 
     @Override
     public void afterPropertiesSet() {
+        instance = resolveInstance(labProperties.container().instance());
+        log.info("실습 컨테이너 인스턴스 이름: {} (라벨 {})", instance, INSTANCE_LABEL);
         leaseSweeper.scheduleWithFixedDelay(this::sweepExpiredSessions, 1, 1, TimeUnit.SECONDS);
     }
 
@@ -167,7 +173,7 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
             // 1. 리소스를 제한한 컨테이너 생성 및 시작
             CreateContainerResponse container = dockerClient.createContainerCmd(image)
                     .withCmd("tail", "-f", "/dev/null")
-                    .withLabels(Map.of(LAB_LABEL, "true", LAB_LABEL + ".id", labId))
+                    .withLabels(Map.of(LAB_LABEL, "true", LAB_LABEL + ".id", labId, INSTANCE_LABEL, instance))
                     .withHostConfig(labHostConfig())
                     .exec();
             String containerId = container.getId();
@@ -450,13 +456,16 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
         }
     }
 
-    /** 이전 실행에서 비정상 종료로 남은 실습 컨테이너를 정리한다. */
+    /**
+     * 이전 실행에서 비정상 종료로 남은 실습 컨테이너를 정리한다.
+     * 이 백엔드(같은 instance)가 만든 것만 지운다. 같은 Docker 를 쓰는 다른 백엔드의 실습은 건드리지 않는다.
+     */
     @EventListener(ApplicationReadyEvent.class)
     public void removeOrphanContainers() {
         try {
             List<Container> orphans = dockerClient.listContainersCmd()
                     .withShowAll(true)
-                    .withLabelFilter(Map.of(LAB_LABEL, "true"))
+                    .withLabelFilter(Map.of(LAB_LABEL, "true", INSTANCE_LABEL, instance))
                     .exec();
             orphans.forEach(c -> removeContainer(c.getId()));
             if (!orphans.isEmpty()) {
@@ -465,6 +474,24 @@ public class TerminalWebSocketHandler extends TextWebSocketHandler implements In
         } catch (Exception e) {
             log.warn("남은 실습 컨테이너 정리 실패 (Docker 호스트 연결 확인 필요): {}", e.getMessage());
         }
+    }
+
+    /** 설정값이 없으면 컴퓨터 이름. Docker 라벨 값으로 쓰므로 영문·숫자·._- 만 남긴다. */
+    static String resolveInstance(String configured) {
+        String name = configured;
+        if (name == null || name.isBlank()) {
+            name = System.getenv("HOSTNAME");
+            if (name == null || name.isBlank()) name = System.getenv("COMPUTERNAME");
+            if (name == null || name.isBlank()) {
+                try {
+                    name = java.net.InetAddress.getLocalHost().getHostName();
+                } catch (Exception e) {
+                    name = "default";
+                }
+            }
+        }
+        String cleaned = name.trim().toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9._-]", "-");
+        return cleaned.isEmpty() ? "default" : cleaned;
     }
 
     /** 서버 종료 시 실행 중인 실습 컨테이너를 모두 삭제한다. */

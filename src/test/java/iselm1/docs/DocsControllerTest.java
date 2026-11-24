@@ -22,20 +22,20 @@ class DocsControllerTest {
 
     @Test
     void 로그인하지_않으면_401() throws Exception {
-        mvc.perform(get("/api/docs/isec/vulnerability")).andExpect(status().isUnauthorized());
-        mvc.perform(get("/api/docs/isec/vulnerability/01-first")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/docs/isec/02-vulnerability")).andExpect(status().isUnauthorized());
+        mvc.perform(get("/api/docs/isec/02-vulnerability/01-first")).andExpect(status().isUnauthorized());
     }
 
     @Test
     @WithMockUser(roles = "PENDING")
     void 이메일_인증_전이면_403() throws Exception {
-        mvc.perform(get("/api/docs/isec/vulnerability")).andExpect(status().isForbidden());
+        mvc.perform(get("/api/docs/isec/02-vulnerability")).andExpect(status().isForbidden());
     }
 
     @Test
     @WithMockUser(roles = "USER")
     void 목록은_md_파일만_이름순으로_제목과_함께() throws Exception {
-        mvc.perform(get("/api/docs/isec/vulnerability"))
+        mvc.perform(get("/api/docs/isec/02-vulnerability"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$", hasSize(2)))
                 .andExpect(jsonPath("$[0].slug").value("01-first"))
@@ -47,13 +47,13 @@ class DocsControllerTest {
     @Test
     @WithMockUser(roles = "ADMIN")
     void 문서가_없는_항목은_빈_목록() throws Exception {
-        mvc.perform(get("/api/docs/isec/trends")).andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+        mvc.perform(get("/api/docs/isec/05-trends")).andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
     }
 
     @Test
     @WithMockUser(roles = "USER")
     void 문서_하나() throws Exception {
-        mvc.perform(get("/api/docs/isec/vulnerability/01-first"))
+        mvc.perform(get("/api/docs/isec/02-vulnerability/01-first"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.slug").value("01-first"))
                 .andExpect(jsonPath("$.title").value("첫 번째 문서"))
@@ -64,15 +64,15 @@ class DocsControllerTest {
     @WithMockUser(roles = "USER")
     void 없는_문서나_잘못된_이름은_404() throws Exception {
         for (String path : new String[]{
-                "/api/docs/isec/vulnerability/99-none",
-                "/api/docs/isec/vulnerability/notes",       // .txt 는 문서가 아님
-                "/api/docs/isec/vulnerability/01-FIRST",    // 대문자 불가
-                "/api/docs/isec/vulnerability/01-first.md", // 확장자 붙여도 불가
-                "/api/docs/isec/vulnerability/..",
+                "/api/docs/isec/02-vulnerability/99-none",
+                "/api/docs/isec/02-vulnerability/notes",       // .txt 는 문서가 아님
+                "/api/docs/isec/02-vulnerability/01-FIRST",    // 대문자 불가
+                "/api/docs/isec/02-vulnerability/01-first.md", // 확장자 붙여도 불가
+                "/api/docs/isec/02-vulnerability/..",
         }) {
             mvc.perform(get(path)).andExpect(status().is4xxClientError());
         }
-        mvc.perform(get("/api/docs/isec/vulnerability/99-none")).andExpect(status().isNotFound());
-        mvc.perform(get("/api/docs/ISEC/vulnerability")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/docs/isec/02-vulnerability/99-none")).andExpect(status().isNotFound());
+        mvc.perform(get("/api/docs/ISEC/02-vulnerability")).andExpect(status().isNotFound());
     }
 }

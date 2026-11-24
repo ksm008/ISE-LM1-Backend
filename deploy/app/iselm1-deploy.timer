@@ -1,0 +1,11 @@
+# 1분마다 GitHub main 에 새 커밋이 있는지 확인한다
+[Unit]
+Description=ISE-LM1 auto deploy check
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=1min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,36 @@
+# 배포 서버용 설정 (/opt/iselm1/backend/application-local.properties, 권한 600, 소유자 iselm1)
+# 백엔드가 실습 서버 안에서 실행되므로 Docker·DB·eBPF 에이전트에 서버 내부 주소로 접속한다.
+# 비밀 값은 이 파일(예시)에 적지 않는다.
+
+# ---- 이 백엔드의 이름 (실습 컨테이너 라벨). 개발 PC 백엔드와 다르게 둔다 ----
+lab.container.instance=prod
+
+# ---- 실습 서버 연결: 같은 서버 안 ----
+lab.docker.host=unix:///var/run/docker.sock
+lab.ebpf.agent-url=http://127.0.0.1:9000
+
+# ---- 사이트 주소 ----
+lab.cors.allowed-origins=https://www.example.com
+auth.frontend-url=https://www.example.com
+# HTTPS 로만 접속하므로 로그인 쿠키에 Secure 를 붙인다
+server.servlet.session.cookie.secure=true
+# Nginx 만 접속하게 서버 내부 주소에서만 받는다
+server.address=127.0.0.1
+server.port=8080
+
+# ---- 회원 DB (같은 서버의 iselm1-postgres 컨테이너) ----
+spring.datasource.url=jdbc:postgresql://127.0.0.1:5432/iselm1
+spring.datasource.username=iselm1
+spring.datasource.password=
+
+# ---- 관리자, 메일, 구글 (개발 PC 의 application-local.properties 와 같은 값) ----
+auth.admin.username=
+auth.admin.password=
+auth.admin.email=
+#spring.mail.host=smtp.gmail.com
+#spring.mail.port=587
+#spring.mail.username=
+#spring.mail.password=
+#auth.mail.from=
+auth.google.client-id=
+auth.google.client-secret=

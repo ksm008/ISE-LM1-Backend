@@ -1,0 +1,30 @@
+# ISE-LM1 백엔드 (배포 서버 = 실습 서버). 설치: deploy/README.md "3. 배포"
+#   /opt/iselm1/backend/app.jar                       백엔드 jar (./gradlew bootJar)
+#   /opt/iselm1/backend/application-local.properties  서버 설정 (권한 600, 소유자 iselm1)
+#   /opt/iselm1/backend/docs/                         학습 문서
+[Unit]
+Description=ISE-LM1 backend
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=iselm1
+Group=iselm1
+# 실습 컨테이너를 만들기 위해 Docker 소켓(/var/run/docker.sock)에 접근한다
+SupplementaryGroups=docker
+WorkingDirectory=/opt/iselm1/backend
+ExecStart=/usr/bin/java -Xms256m -Xmx768m -XX:+ExitOnOutOfMemoryError -jar /opt/iselm1/backend/app.jar
+# 종료(SIGTERM) 시 실습 컨테이너를 정리할 시간을 준다
+TimeoutStopSec=60
+SuccessExitStatus=143
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

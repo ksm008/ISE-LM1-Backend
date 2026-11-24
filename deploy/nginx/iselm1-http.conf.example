@@ -1,0 +1,50 @@
+# 인증서 발급 전 임시 설정 (/etc/nginx/sites-available/iselm1.conf)
+# certbot 이 http://<도메인>/.well-known/acme-challenge/ 로 도메인 소유를 확인한다.
+# 인증서를 받은 뒤에는 iselm1.conf.example (HTTPS) 로 바꾼다.
+
+# 도메인 없이 들어오는 요청(IP 로 접속 등)은 응답하지 않는다
+server {
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 444;
+    }
+}
+
+# example.com → www.example.com
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 http://www.example.com$request_uri;
+    }
+}
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name www.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    root /var/www/iselm1;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

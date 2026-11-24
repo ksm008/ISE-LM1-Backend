@@ -34,7 +34,7 @@
 - **실습 자원 보호**
   - 동시 실습 수, 컨테이너 메모리·CPU·프로세스 수를 제한합니다.
   - 세션 시간이 만료되면 터미널 연결을 끊고 컨테이너를 삭제합니다.
-  - 서버 종료 시, 그리고 비정상 종료 후 다시 시작할 때 남은 실습 컨테이너를 정리합니다.
+  - 서버 종료 시, 그리고 비정상 종료 후 다시 시작할 때 남은 실습 컨테이너를 정리합니다. 같은 Docker 를 쓰는 다른 백엔드의 실습은 건드리지 않습니다(`lab.container.instance`).
 
 ## 기술 스택
 
@@ -80,7 +80,8 @@ Windows에서는 `./gradlew` 대신 `gradlew.bat` 을 사용합니다.
 | 항목 | 내용 |
 |---|---|
 | 위치 | `docs.root` (기본 `./docs`, 서버 실행 위치 기준). git 에 올리지 않음 |
-| 구조 | `docs/{section}/{topic}/{slug}.md` 예) `docs/isec/vulnerability/01-web-application.md` |
+| 구조 | `docs/{section}/{topic}/{slug}.md` 예) `docs/isec/02-vulnerability/01-web-application.md` |
+| 정보보안기사 항목 폴더 | `01-system-network`, `02-vulnerability`, `03-log-response`, `04-risk-management`, `05-trends` (항목 번호 + 프론트 `curriculum.js` 의 항목 id) |
 | 이름 규칙 | 폴더·파일 이름은 영문 소문자·숫자·하이픈만 (예: `01-web-application`). 목록은 파일 이름 순이므로 앞에 번호를 붙임 |
 | 제목 | 파일의 첫 `# 제목` 줄 (없으면 파일 이름) |
 | 인코딩 | UTF-8 (BOM 은 무시) |
@@ -112,6 +113,7 @@ lab.cors.allowed-origins=http://localhost:5173
 | `lab.docker.cert-path` | (없음) | TLS 인증서(`ca.pem`, `cert.pem`, `key.pem`) 디렉터리 |
 | `lab.ebpf.agent-url` | `http://localhost:9000` | eBPF 로그 에이전트 주소 (`/stream?containerId=` 가 붙음) |
 | `lab.cors.allowed-origins` | `http://localhost:5173` | 접속을 허용할 프론트엔드 Origin (쉼표로 여러 개) |
+| `lab.container.instance` | (컴퓨터 이름) | 이 백엔드의 이름. 실습 컨테이너에 `iselm1.lab.instance` 라벨로 붙고, 시작할 때 이 이름의 컨테이너만 정리합니다. 같은 Docker 를 쓰는 배포 서버(`prod`)와 개발 PC 가 서로의 실습을 지우지 않게 합니다 |
 | `lab.container.image` | `sec-lab-ubuntu:1.2` | 실습 컨테이너 이미지 (`deploy/lab-image/Dockerfile`) |
 | `lab.container.memory-mb` | `512` | 컨테이너 메모리 제한 (스왑 없음) |
 | `lab.container.cpus` | `1.0` | 컨테이너 CPU 제한 |
@@ -260,6 +262,7 @@ src/main/resources/
 - 학습 문서 폴더(`docs/`)는 git 에 없으므로 서버에 따로 복사하고, 필요하면 `docs.root` 로 위치를 지정합니다.
 - 자동 테스트(`./gradlew test`)는 메모리 DB(H2, 테스트 전용)를 쓰므로 실제 DB 에 접속하지 않습니다.
 - 서버에 직접 적용하는 설정과 절차는 [`deploy/README.md`](deploy/README.md) 에 있습니다.
+- **자동 배포**: `main` 에 push 하면 1분 안에 서버가 받아서 테스트·빌드·배포합니다(백엔드는 재시작되어 진행 중인 실습이 끊김). 학습 문서는 git 에 없으므로 `deploy/upload-docs.sh` 로 올립니다 (`deploy/README.md` "자동 배포").
 
 | 항목 | 내용 | 파일 |
 |---|---|---|

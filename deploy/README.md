@@ -9,7 +9,8 @@
 | `lab-image/` | 실습 컨테이너 이미지 (`sec-lab-ubuntu`) Dockerfile | 실습 서버 `~/sec-lab-image` |
 | `lab-server/` | 실습 컨테이너 방화벽 (메타데이터·호스트·다른 컨테이너 접근 차단) | 실습 서버 |
 | `docker-tls/` | Docker API TLS 인증서 생성 스크립트, dockerd 설정 | 실습 서버 + 백엔드 PC |
-| `nginx/` | 프론트·백엔드를 한 도메인으로 묶는 Nginx 설정 예시 | 배포 서버 |
+| `app/` | 백엔드 systemd 서비스, 서버용 설정 예시 | 실습 서버(배포) |
+| `nginx/` | 프론트·백엔드를 한 도메인으로 묶는 Nginx 설정 (인증서 발급 전 HTTP / 발급 후 HTTPS) | 실습 서버(배포) |
 
 ## DB. 회원 DB (PostgreSQL)
 
@@ -161,19 +162,94 @@ lab.docker.cert-path=C:/Users/<사용자>/.docker/iselm1
 
 ## 3. 배포 (Nginx + HTTPS)
 
-백엔드를 서버에 배포할 때 프론트엔드와 같은 도메인으로 묶습니다. 같은 Origin 이 되어 CORS 설정이 단순해지고, `crypto.randomUUID()` 가 필요로 하는 보안 컨텍스트(HTTPS)가 됩니다.
+백엔드를 실습 서버에 함께 올리고, Nginx 로 프론트엔드와 같은 도메인에 묶습니다. 같은 Origin 이 되어 CORS 가 단순해지고, `crypto.randomUUID()`·클립보드가 필요로 하는 HTTPS 가 됩니다.
+사이트 주소는 `https://www.<도메인>` 하나이고, `<도메인>`(www 없음)과 http 는 모두 그 주소로 보냅니다.
+
+```
+브라우저 ──HTTPS──▶ Nginx(443) ─┬─ /                       → /var/www/iselm1 (프론트 dist)
+                                └─ /api /ws /oauth2 /login/oauth2 → 127.0.0.1:8080 (백엔드)
+백엔드 ─┬─ Docker   unix:///var/run/docker.sock
+        ├─ DB       127.0.0.1:5432
+        └─ eBPF     127.0.0.1:9000
+```
+
+| 파일 | 서버 위치 |
+|---|---|
+| `app/iselm1-backend.service` | `/etc/systemd/system/iselm1-backend.service` (사용자 `iselm1`, docker 그룹) |
+| `app/application-local.properties.example` | `/opt/iselm1/backend/application-local.properties` (권한 600, 비밀 값은 개발 PC 설정과 같음) |
+| 백엔드 jar (`./gradlew bootJar`) | `/opt/iselm1/backend/app.jar` |
+| 학습 문서 `docs/` (`.obsidian` 제외) | `/opt/iselm1/backend/docs/` |
+| 프론트 (`VITE_API_BASE_URL=https://www.<도메인> npm run build`) | `/var/www/iselm1/` |
+| `nginx/iselm1-http.conf.example` → 인증서 발급 후 `nginx/iselm1.conf.example` | `/etc/nginx/sites-available/iselm1.conf` (+ `sites-enabled` 링크, `default` 링크 제거) |
+
+### 처음 설치
 
 | 순서 | 작업 |
 |---|---|
-| 1 | OCI 보안 목록 수신 규칙에 TCP 80, 443 (소스 `0.0.0.0/0`) 추가 |
-| 2 | 호스트 방화벽: `sudo iptables -I INPUT -p tcp -m state --state NEW -m multiport --dports 80,443 -j ACCEPT`, `/etc/iptables/rules.v4` 에도 같은 줄 추가 |
-| 3 | `sudo apt install nginx certbot python3-certbot-nginx` |
-| 4 | `nginx/iselm1.conf.example` 을 `/etc/nginx/sites-available/iselm1.conf` 로 복사하고 도메인 수정 → `sites-enabled` 에 링크 |
-| 5 | `sudo certbot --nginx -d example.com` (인증서 발급, 자동 갱신) |
-| 6 | 프론트: `VITE_API_BASE_URL=https://example.com npm run build` → `dist/` 를 `/var/www/iselm1` 로 복사 |
-| 7 | 백엔드: `lab.cors.allowed-origins=https://example.com`, `auth.frontend-url=https://example.com` 으로 실행 (systemd 서비스 등). 구글 OAuth 클라이언트에 `https://example.com/login/oauth2/code/google` 리디렉션 URI 추가 |
-| 8 | `sudo nginx -t && sudo systemctl reload nginx` |
+| 1 | DNS: `www` 와 `@`(도메인 자체) 모두 A 레코드로 서버 공인 IP |
+| 2 | OCI 보안 목록 수신 규칙에 TCP 80, 443 (소스 `0.0.0.0/0`) |
+| 3 | 호스트 방화벽: INPUT 의 80 규칙 다음에 443 허용을 넣고, `/etc/iptables/rules.v4` 에도 같은 줄 추가 (`netfilter-persistent save` 는 쓰지 않음) |
+| 4 | `sudo apt-get install openjdk-17-jre-headless nginx certbot` |
+| 5 | `sudo useradd --system --home-dir /opt/iselm1 --shell /usr/sbin/nologin iselm1 && sudo usermod -aG docker iselm1` |
+| 6 | 위 표대로 파일을 두고 `sudo systemctl enable --now iselm1-backend` |
+| 7 | 임시 HTTP 설정(`iselm1-http.conf.example`)으로 Nginx 시작 → `sudo certbot certonly --webroot -w /var/www/certbot -d www.<도메인> -d <도메인>` |
+| 8 | HTTPS 설정(`iselm1.conf.example`)으로 바꾸고 `sudo nginx -t && sudo systemctl reload nginx`. 인증서 갱신 후 Nginx 를 다시 읽게 `/etc/letsencrypt/renewal-hooks/deploy/` 에 `systemctl reload nginx` 스크립트 |
+| 9 | 구글 OAuth 클라이언트에 리디렉션 URI `https://www.<도메인>/login/oauth2/code/google` 추가 |
 
-- `/ws/` 는 WebSocket 업그레이드 헤더를 넘기고 `proxy_read_timeout` 을 실습 세션(10분)보다 길게 둡니다. 기본 60초면 입력이 없는 동안 터미널이 끊깁니다.
-- `/api/logs`(SSE)는 `proxy_buffering off` 로 둡니다.
-- 백엔드 8080 포트는 외부에 열지 않습니다 (Nginx 만 접근).
+- `apt` 로 패키지를 설치할 때 needrestart 가 Docker 를 재시작하면 실습 컨테이너가 종료됩니다(live-restore 꺼짐). 실습이 없을 때 설치하고, 재시작 대상 목록을 확인합니다.
+- 백엔드 로그: `sudo journalctl -u iselm1-backend -f`
+- `/ws/` 는 WebSocket 업그레이드 헤더를 넘기고 `proxy_read_timeout` 을 실습 세션(10분)보다 길게 둡니다. `/api/logs`(SSE)는 `proxy_buffering off`.
+- 백엔드는 `server.address=127.0.0.1` 로 Nginx 에서만 접속합니다.
+
+### 자동 배포 (GitHub push → 서버)
+
+서버가 1분마다 GitHub 의 `main` 을 확인하고, 새 커밋이 있으면 서버에서 테스트·빌드한 뒤 배포합니다. GitHub 에 비밀 값(SSH 키 등)을 두지 않고 서버로 들어오는 포트도 열지 않습니다.
+저장소가 공개라서 서버에 GitHub Actions self-hosted runner 를 두지 않습니다(포크의 PR 이 서버에서 실행될 수 있음).
+
+| 파일 | 서버 위치 |
+|---|---|
+| `app/iselm1-deploy.sh` | `/usr/local/sbin/iselm1-deploy.sh` |
+| `app/iselm1-deploy.service`, `app/iselm1-deploy.timer` | `/etc/systemd/system/` (`sudo systemctl enable --now iselm1-deploy.timer`) |
+| `app/iselm1-deploy.env.example` | `/etc/iselm1-deploy.env` (`SITE_URL=https://www.<도메인>`) |
+
+| 저장소 | 새 커밋이 오면 | 실패하면 |
+|---|---|---|
+| 백엔드 | `./gradlew test bootJar` → `app.jar` 교체 → 서비스 재시작 → 응답 확인 | 테스트·빌드 실패: 배포 안 함. 재시작 후 3분 안에 응답이 없으면 이전 jar(`app.jar.prev`)로 되돌림 |
+| 프론트 | `npm ci && npm test && npm run build` → `/var/www/iselm1` 교체 (이전 것은 `/var/www/iselm1.prev`) | 테스트·빌드 실패: 배포 안 함 |
+
+- 빌드는 전용 계정 `iselm1-ci`(홈 `/opt/iselm1/ci`, 작업 폴더 `backend/`, `frontend/`)로 하고, 파일 교체·재시작만 root 로 합니다. 빌드에는 `openjdk-17-jdk-headless`, `nodejs`, `npm` 이 필요합니다.
+- 실패한 커밋은 다시 시도하지 않습니다. 고쳐서 다시 push 하면 그 커밋을 배포합니다.
+- **백엔드가 배포되면 진행 중인 실습이 끊깁니다** (서비스 재시작).
+- 상태·기록: `/var/lib/iselm1-deploy/{backend,frontend}.last`(마지막으로 처리한 커밋), `*.history`. 로그: `journalctl -u iselm1-deploy`
+
+| 명령 (서버) | 용도 |
+|---|---|
+| `sudo iselm1-deploy.sh` | 지금 바로 확인·배포 |
+| `sudo FORCE=1 iselm1-deploy.sh` | 새 커밋이 없어도 지금 `main` 을 다시 배포 |
+| `sudo DRY_RUN=1 FORCE=1 iselm1-deploy.sh` | 테스트·빌드만 (배포·기록 안 함) |
+| `sudo MARK_ONLY=1 iselm1-deploy.sh` | 지금 `main` 을 배포한 것으로 기록만 (처음 설치할 때) |
+| `sudo systemctl stop iselm1-deploy.timer` | 자동 배포 멈춤 |
+
+### 학습 문서 올리기
+
+학습 문서(`docs/`)는 git 에 없어서 push 로 배포되지 않습니다. 개발 PC(Git Bash)에서 올립니다.
+
+```bash
+backend/deploy/upload-docs.sh
+```
+
+- `.obsidian`, `.trash` 는 빼고 올리고, 서버의 `docs/` 를 통째로 바꿉니다(이전 것은 `docs.prev`). 재시작은 필요 없습니다.
+- 서버 접속: `lab.docker.host` 와 같은 호스트(Tailscale), PuTTY `plink`/`pscp`, 키 `~/.ssh/iselm1_lab.ppk`(`ISELM1_SSH_KEY` 로 바꿀 수 있음).
+
+### 수동 업데이트
+
+
+| 대상 | 작업 |
+|---|---|
+| 백엔드 | `app.jar` 를 바꾸고 `sudo systemctl restart iselm1-backend` (진행 중인 실습은 종료됨). 보통은 자동 배포를 씁니다 |
+| 프론트 | `/var/www/iselm1/` 내용을 새 `dist/` 로 바꿈 (재시작 불필요). 보통은 자동 배포를 씁니다 |
+| 문서 | `upload-docs.sh` (위) |
+
+### 개발 PC 백엔드와 함께 쓸 때
+
+배포 서버(`lab.container.instance=prod`)와 개발 PC 백엔드가 같은 Docker 를 씁니다. 각 백엔드는 시작할 때 자기 이름(`iselm1.lab.instance` 라벨)의 실습 컨테이너만 정리하므로 서로의 실습을 지우지 않습니다. 개발 PC 는 `lab.container.instance` 를 비우면 컴퓨터 이름을 씁니다. 이 라벨이 없는 예전 백엔드 코드로 개발 서버를 띄우면 배포 서버의 실습까지 지우므로, 개발 PC 백엔드도 최신 코드로 실행합니다.

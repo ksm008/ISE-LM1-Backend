@@ -43,6 +43,12 @@ public record LabProperties(
     ) {}
 
     public record Container(
+            /**
+             * 이 백엔드를 구분하는 이름. 만든 실습 컨테이너에 라벨(iselm1.lab.instance)로 붙이고,
+             * 시작할 때는 이 이름의 컨테이너만 정리한다. 같은 Docker 호스트를 쓰는 다른 백엔드(배포 서버 ↔ 개발 PC)의
+             * 실습 컨테이너를 지우지 않기 위해서다. 비우면 컴퓨터 이름(hostname)을 쓴다.
+             */
+            String instance,
             @DefaultValue("sec-lab-ubuntu:1.2") String image,
             @DefaultValue("512") long memoryMb,
             @DefaultValue("1.0") double cpus,

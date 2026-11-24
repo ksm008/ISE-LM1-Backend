@@ -1,0 +1,13 @@
+# GitHub main 의 새 커밋 배포 (iselm1-deploy.timer 가 실행). 로그: journalctl -u iselm1-deploy
+[Unit]
+Description=ISE-LM1 auto deploy from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/iselm1-deploy.sh
+TimeoutStartSec=30min
+# 빌드가 실습 컨테이너보다 CPU·디스크를 먼저 쓰지 않게 한다
+Nice=10
+IOSchedulingClass=idle
