@@ -27,6 +27,9 @@
   - 실행 중인 터미널 실습 컨테이너 안에서 root 로 `tcpdump` 를 실행하고, pcap 출력을 패킷 단위로 나눠 브라우저로 보냅니다. 프로토콜 해석은 프론트엔드에서 합니다.
   - 캡처 필터(BPF)와 인터페이스를 지정할 수 있고, 패킷 크기(snaplen)와 캡처당 패킷 수를 제한합니다.
   - 터미널 실습이 끝나면 캡처도 중지하고 연결을 닫습니다.
+- **학습 문서 (Markdown)**
+  - 항목별 학습 문서를 `docs/` 폴더(`docs.root`)의 `.md` 파일로 두고, 로그인(인증 완료)한 회원에게 API 로 제공합니다.
+  - 문서 폴더는 git 에 올리지 않습니다(`.gitignore`). 요청마다 파일을 읽으므로 파일을 고치면 서버를 재시작하지 않아도 반영됩니다.
 - **Docker 연결 확인**: 컨테이너를 만들지 않고 원격 Docker 호스트 연결 상태만 확인하는 API를 제공합니다.
 - **실습 자원 보호**
   - 동시 실습 수, 컨테이너 메모리·CPU·프로세스 수를 제한합니다.
@@ -71,6 +74,17 @@ Windows에서는 `./gradlew` 대신 `gradlew.bat` 을 사용합니다.
 | `auth.admin.username`, `auth.admin.password`, `auth.admin.email` | 관리자 계정. 서버 시작 시 없으면 만들고 있으면 권한·비밀번호를 맞춤 |
 | `spring.mail.host`, `port`, `username`, `password`, `auth.mail.from` | 인증번호 메일 SMTP. `spring.mail.host` 가 없으면 인증번호를 서버 로그에만 출력(개발용) |
 | `auth.google.client-id`, `auth.google.client-secret` | 구글 OAuth 클라이언트. 비우면 구글 로그인이 꺼짐 |
+
+### 학습 문서 (docs/)
+
+| 항목 | 내용 |
+|---|---|
+| 위치 | `docs.root` (기본 `./docs`, 서버 실행 위치 기준). git 에 올리지 않음 |
+| 구조 | `docs/{section}/{topic}/{slug}.md` 예) `docs/isec/vulnerability/01-web-application.md` |
+| 이름 규칙 | 폴더·파일 이름은 영문 소문자·숫자·하이픈만 (예: `01-web-application`). 목록은 파일 이름 순이므로 앞에 번호를 붙임 |
+| 제목 | 파일의 첫 `# 제목` 줄 (없으면 파일 이름) |
+| 인코딩 | UTF-8 (BOM 은 무시) |
+| 배포 | jar 와 함께 `docs/` 폴더를 서버에 복사하거나, `docs.root`(환경 변수 `DOCS_ROOT`)로 위치 지정 |
 
 ### 실습 서버 설정
 
@@ -121,6 +135,8 @@ lab.cors.allowed-origins=http://localhost:5173
 | WebSocket | `/ws/capture?labId={labId}` | 실행 중인 실습 컨테이너의 패킷 캡처 (Wireshark 실습) |
 | SSE | `/api/logs?labId={labId}` | 해당 실습의 eBPF 모니터링 로그 스트림 (`text/event-stream`, 현재 프론트엔드에서 미사용) |
 | GET | `/api/docker/health` | Docker 연결 상태 (`{"status":"UP"}`, 실패 시 503 `DOWN`) |
+| GET | `/api/docs/{section}/{topic}` | 학습 문서 목록 `[{"slug","title"}]` (파일 이름 순, 문서가 없으면 `[]`, 이름 형식이 틀리면 404) |
+| GET | `/api/docs/{section}/{topic}/{slug}` | 학습 문서 하나 `{"slug","title","markdown"}` (없으면 404) |
 | GET | `/api/auth/me` | 로그인 상태 (`authenticated`, `username`, `email`, `role`, `active`, `googleLinked` 등). 로그인 전에도 200 |
 | GET | `/api/auth/config` | `{"googleEnabled":bool,"mailEnabled":bool}` |
 | GET | `/api/auth/csrf` | CSRF 토큰 발급 (쿠키 `XSRF-TOKEN` 설정) |
@@ -196,6 +212,9 @@ src/main/java/iselm1/
 │   ├── LabProperties.java             # lab.* 설정 (실습 서버 주소, 제한 값)
 │   ├── LabIds.java                    # labId(UUID) 검증
 │   └── SecurityConfig.java            # 접근 규칙, 세션·CSRF, /api/** CORS, 구글 로그인
+├── docs/
+│   ├── DocsProperties.java            # docs.root (문서 폴더)
+│   └── DocsController.java            # 학습 문서 API (/api/docs/**), 경로 검사
 ├── docker/
 │   ├── DockerConfig.java              # 원격 Docker 호스트 DockerClient 설정
 │   ├── DockerController.java          # Docker 연결 확인 API
@@ -210,6 +229,8 @@ src/main/java/iselm1/
 └── websocket/
     ├── WebSocketConfig.java           # WebSocket 엔드포인트 등록
     └── TerminalWebSocketHandler.java  # 컨테이너 생성, 쉘 연결, 종료 시 정리
+
+docs/                                  # 학습 문서 Markdown (git 제외, docs/{section}/{topic}/{slug}.md)
 
 deploy/                                # 서버에 직접 적용하는 설정 (deploy/README.md)
 ├── lab-server/                        # 실습 컨테이너 방화벽 스크립트, systemd 서비스
@@ -236,6 +257,7 @@ src/main/resources/
 ## 배포 시 참고
 
 - `lab.cors.allowed-origins`, `auth.frontend-url` 을 실제 프론트엔드 도메인으로 지정합니다. 구글 OAuth 클라이언트에 `https://<도메인>/login/oauth2/code/google` 리디렉션 URI 를 추가합니다.
+- 학습 문서 폴더(`docs/`)는 git 에 없으므로 서버에 따로 복사하고, 필요하면 `docs.root` 로 위치를 지정합니다.
 - 자동 테스트(`./gradlew test`)는 메모리 DB(H2, 테스트 전용)를 쓰므로 실제 DB 에 접속하지 않습니다.
 - 서버에 직접 적용하는 설정과 절차는 [`deploy/README.md`](deploy/README.md) 에 있습니다.
 

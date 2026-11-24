@@ -40,3 +40,8 @@ out/
 application-local.properties
 .env
 .env.local
+
+### 학습 문서 (서버의 docs.root 폴더에 따로 둔다) ###
+/docs/
+# Obsidian 보관함 설정 (docs/isec 를 Obsidian 으로 편집)
+.obsidian/
