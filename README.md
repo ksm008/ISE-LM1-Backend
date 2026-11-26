@@ -84,6 +84,7 @@ Windows에서는 `./gradlew` 대신 `gradlew.bat` 을 사용합니다.
 | 정보보안기사 항목 폴더 | `01-system-network`, `02-vulnerability`, `03-log-response`, `04-risk-management`, `05-trends` (항목 번호 + 프론트 `curriculum.js` 의 항목 id) |
 | 이름 규칙 | 폴더·파일 이름은 영문 소문자·숫자·하이픈만 (예: `01-web-application`). 목록은 파일 이름 순이므로 앞에 번호를 붙임 |
 | 제목 | 파일의 첫 `# 제목` 줄 (없으면 파일 이름) |
+| 수식 | LaTeX 문법. 문장 안은 `$2^n$`, 별도 줄은 `$$ ... $$` (프론트에서 KaTeX 로 표시) |
 | 인코딩 | UTF-8 (BOM 은 무시) |
 | 배포 | `docs/isec` 를 별도 비공개 저장소로 두면 push 로 자동 배포(`deploy/README.md` "학습 문서 올리기"). 또는 `docs/` 를 서버에 복사하거나 `docs.root`(환경 변수 `DOCS_ROOT`)로 위치 지정 |
 
