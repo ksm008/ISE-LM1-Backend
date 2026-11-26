@@ -1,5 +1,5 @@
 #!/bin/bash
-# GitHub main 에 새 커밋이 있으면 서버에서 테스트·빌드한 뒤 배포한다.
+# GitHub main 에 새 커밋이 있으면 서버에서 테스트·빌드한 뒤 배포한다(학습 문서 저장소는 파일만 교체).
 # systemd timer(iselm1-deploy.timer)가 1분마다 실행한다. 설치: deploy/README.md "자동 배포"
 #
 #   sudo iselm1-deploy.sh            새 커밋이 있는 저장소만 배포
@@ -19,8 +19,13 @@ FRONTEND_REPO=${FRONTEND_REPO:-https://github.com/ksm008/ISE-LM1-Frontend.git}
 BRANCH=${BRANCH:-main}
 CI_USER=iselm1-ci
 CI_HOME=/opt/iselm1/ci
+# 학습 문서 저장소(비공개, 저장소 루트 = docs/isec). 비우면 문서는 배포하지 않는다.
+# 서버가 읽기 전용 배포 키(DOCS_SSH_KEY)로 받아 간다.
+DOCS_REPO=${DOCS_REPO:-}
+DOCS_SSH_KEY=${DOCS_SSH_KEY:-$CI_HOME/.ssh/iselm1-docs}
 STATE=/var/lib/iselm1-deploy
 APP_DIR=/opt/iselm1/backend
+DOCS_DIR=$APP_DIR/docs/isec
 WEB_DIR=/var/www/iselm1
 HEALTH_URL=http://127.0.0.1:8080/api/auth/config
 
@@ -30,7 +35,9 @@ mkdir -p "$STATE"
 
 log() { echo "[$1] ${*:2}" >&2; }   # stdout 은 checkout 의 결과(커밋 해시)로 쓰므로 로그는 stderr
 # setpriv: runuser 와 달리 PAM 세션 기록(1분마다 auth 로그)이 남지 않는다
-as_ci() { setpriv --reuid="$CI_USER" --regid="$CI_USER" --init-groups --reset-env -- env HOME="$CI_HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 "$@"; }  # LANG: 한글 테스트 이름(리포트 파일)
+# LANG: 한글 테스트 이름(리포트 파일). GIT_SSH_COMMAND: 문서 저장소(ssh 주소)에만 쓰인다
+as_ci() { setpriv --reuid="$CI_USER" --regid="$CI_USER" --init-groups --reset-env -- env HOME="$CI_HOME" PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+    GIT_SSH_COMMAND="ssh -i $DOCS_SSH_KEY -o IdentitiesOnly=yes -o BatchMode=yes" "$@"; }
 
 # 새 커밋이 있으면 작업 폴더를 그 커밋으로 맞추고 커밋 해시를 출력한다. 없으면 실패(1).
 checkout() {
@@ -102,7 +109,26 @@ deploy_frontend() {
     finish frontend "$commit" "배포 완료"
 }
 
+# 문서: 빌드 없이 추적 중인 파일만(git archive) docs/isec 로 바꾼다. 재시작 필요 없음.
+deploy_docs() {
+    [ -n "$DOCS_REPO" ] || return 0
+    local commit dir=$CI_HOME/docs
+    commit=$(checkout docs "$DOCS_REPO") || return 0
+    if [ -n "${DRY_RUN:-}" ]; then log docs "DRY_RUN: ${commit:0:7} 받기 성공"; return 0; fi
+
+    rm -rf "$DOCS_DIR.new" && mkdir -p "$DOCS_DIR.new" &&
+        as_ci git -C "$dir" archive --format=tar "$commit" | tar -x --no-same-owner -C "$DOCS_DIR.new" &&
+        rm -f "$DOCS_DIR.new/.gitignore" &&
+        chown -R iselm1:iselm1 "$DOCS_DIR.new" && chmod -R u=rwX,go=rX "$DOCS_DIR.new" || {
+        finish docs "$commit" "실패(파일 복사)"; return 1; }
+    rm -rf "$DOCS_DIR.prev"
+    if [ -d "$DOCS_DIR" ]; then mv "$DOCS_DIR" "$DOCS_DIR.prev"; fi
+    mv "$DOCS_DIR.new" "$DOCS_DIR"
+    finish docs "$commit" "배포 완료"
+}
+
 status=0
+deploy_docs || status=1   # 빠르므로 먼저 (백엔드 빌드를 기다리지 않음)
 deploy_backend || status=1
 deploy_frontend || status=1
 exit $status

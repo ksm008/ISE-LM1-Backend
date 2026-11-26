@@ -216,11 +216,12 @@ lab.docker.cert-path=C:/Users/<사용자>/.docker/iselm1
 |---|---|---|
 | 백엔드 | `./gradlew test bootJar` → `app.jar` 교체 → 서비스 재시작 → 응답 확인 | 테스트·빌드 실패: 배포 안 함. 재시작 후 3분 안에 응답이 없으면 이전 jar(`app.jar.prev`)로 되돌림 |
 | 프론트 | `npm ci && npm test && npm run build` → `/var/www/iselm1` 교체 (이전 것은 `/var/www/iselm1.prev`) | 테스트·빌드 실패: 배포 안 함 |
+| 학습 문서 (`DOCS_REPO` 지정 시) | 빌드 없이 추적 중인 파일만(`git archive`) `/opt/iselm1/backend/docs/isec` 교체 (이전 것은 `isec.prev`), 재시작 없음. 백엔드·프론트보다 먼저 처리 | 받기 실패: 다음 분에 다시 시도 |
 
 - 빌드는 전용 계정 `iselm1-ci`(홈 `/opt/iselm1/ci`, 작업 폴더 `backend/`, `frontend/`)로 하고, 파일 교체·재시작만 root 로 합니다. 빌드에는 `openjdk-17-jdk-headless`, `nodejs`, `npm` 이 필요합니다.
 - 실패한 커밋은 다시 시도하지 않습니다. 고쳐서 다시 push 하면 그 커밋을 배포합니다.
 - **백엔드가 배포되면 진행 중인 실습이 끊깁니다** (서비스 재시작).
-- 상태·기록: `/var/lib/iselm1-deploy/{backend,frontend}.last`(마지막으로 처리한 커밋), `*.history`. 로그: `journalctl -u iselm1-deploy`
+- 상태·기록: `/var/lib/iselm1-deploy/{backend,frontend,docs}.last`(마지막으로 처리한 커밋), `*.history`. 로그: `journalctl -u iselm1-deploy`
 
 | 명령 (서버) | 용도 |
 |---|---|
@@ -232,7 +233,15 @@ lab.docker.cert-path=C:/Users/<사용자>/.docker/iselm1
 
 ### 학습 문서 올리기
 
-학습 문서(`docs/`)는 git 에 없어서 push 로 배포되지 않습니다. 개발 PC(Git Bash)에서 올립니다.
+학습 문서(`docs/`)는 백엔드 저장소에 없습니다(`.gitignore`). `docs/isec` 를 **별도 비공개 저장소**(저장소 루트 = `isec` 폴더, `.obsidian/`·`.trash/` 제외)로 두면 push 로 배포됩니다.
+
+| 설정 (서버, 한 번만) | 내용 |
+|---|---|
+| 배포 키 | `sudo -u iselm1-ci ssh-keygen -t ed25519 -N "" -f /opt/iselm1/ci/.ssh/iselm1-docs` → 공개키를 문서 저장소 Settings → Deploy keys 에 등록(쓰기 권한 없음) |
+| GitHub 호스트 키 | `ssh-keyscan -t ed25519 github.com` 결과를 지문(`SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU`) 확인 후 `/opt/iselm1/ci/.ssh/known_hosts`(iselm1-ci, 600) |
+| `/etc/iselm1-deploy.env` | `DOCS_REPO=git@github.com:<계정>/<문서 저장소>.git` (키 위치를 바꾸면 `DOCS_SSH_KEY`) |
+
+push 없이 개발 PC(Git Bash)에서 바로 올릴 수도 있습니다. 다음 문서 커밋이 배포되면 `isec` 는 저장소 내용으로 바뀝니다.
 
 ```bash
 backend/deploy/upload-docs.sh

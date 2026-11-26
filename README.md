@@ -85,7 +85,7 @@ Windows에서는 `./gradlew` 대신 `gradlew.bat` 을 사용합니다.
 | 이름 규칙 | 폴더·파일 이름은 영문 소문자·숫자·하이픈만 (예: `01-web-application`). 목록은 파일 이름 순이므로 앞에 번호를 붙임 |
 | 제목 | 파일의 첫 `# 제목` 줄 (없으면 파일 이름) |
 | 인코딩 | UTF-8 (BOM 은 무시) |
-| 배포 | jar 와 함께 `docs/` 폴더를 서버에 복사하거나, `docs.root`(환경 변수 `DOCS_ROOT`)로 위치 지정 |
+| 배포 | `docs/isec` 를 별도 비공개 저장소로 두면 push 로 자동 배포(`deploy/README.md` "학습 문서 올리기"). 또는 `docs/` 를 서버에 복사하거나 `docs.root`(환경 변수 `DOCS_ROOT`)로 위치 지정 |
 
 ### 실습 서버 설정
 
@@ -259,10 +259,10 @@ src/main/resources/
 ## 배포 시 참고
 
 - `lab.cors.allowed-origins`, `auth.frontend-url` 을 실제 프론트엔드 도메인으로 지정합니다. 구글 OAuth 클라이언트에 `https://<도메인>/login/oauth2/code/google` 리디렉션 URI 를 추가합니다.
-- 학습 문서 폴더(`docs/`)는 git 에 없으므로 서버에 따로 복사하고, 필요하면 `docs.root` 로 위치를 지정합니다.
+- 학습 문서 폴더(`docs/`)는 이 저장소에 없으므로 별도 문서 저장소로 자동 배포하거나 서버에 따로 복사하고, 필요하면 `docs.root` 로 위치를 지정합니다.
 - 자동 테스트(`./gradlew test`)는 메모리 DB(H2, 테스트 전용)를 쓰므로 실제 DB 에 접속하지 않습니다.
 - 서버에 직접 적용하는 설정과 절차는 [`deploy/README.md`](deploy/README.md) 에 있습니다.
-- **자동 배포**: `main` 에 push 하면 1분 안에 서버가 받아서 테스트·빌드·배포합니다(백엔드는 재시작되어 진행 중인 실습이 끊김). 학습 문서는 git 에 없으므로 `deploy/upload-docs.sh` 로 올립니다 (`deploy/README.md` "자동 배포").
+- **자동 배포**: `main` 에 push 하면 1분 안에 서버가 받아서 테스트·빌드·배포합니다(백엔드는 재시작되어 진행 중인 실습이 끊김). 학습 문서는 별도 비공개 저장소(`DOCS_REPO`)에 push 하면 1분 안에 파일만 바뀌고, `deploy/upload-docs.sh` 로 직접 올릴 수도 있습니다 (`deploy/README.md` "자동 배포").
 
 | 항목 | 내용 | 파일 |
 |---|---|---|
